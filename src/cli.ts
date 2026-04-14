@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import type http from "node:http";
 import path from "node:path";
 
 import { createGatewayServer } from "./server.js";
@@ -14,6 +16,7 @@ interface CliOverrides {
   upstreamBaseUrl?: string;
   upstreamApiKey?: string;
   upstreamApiVersion?: string;
+  claudeCommand?: string;
 }
 
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
@@ -29,6 +32,7 @@ function showHelp(): void {
 Usage:
   npx @jaluik/prompt-tracker
   npx @jaluik/prompt-tracker --port 8787 --upstream-url https://api.anthropic.com
+  npx @jaluik/prompt-tracker claude
   prompt-gateway
   prompt-gateway --output ./.claude/prompt-tracker
 
@@ -41,6 +45,7 @@ Options:
   --api-version <value>       anthropic-version header
   --html-title <value>        HTML page title
   --timezone <value>          Timezone label override
+  --claude-command <value>    Claude executable, default: claude
   --no-html                   Disable HTML artifact output
   --no-json                   Disable JSON artifact output
   --help                      Show this help
@@ -100,6 +105,10 @@ function parseArgs(argv: string[]): CliOverrides {
         overrides.timezone = next;
         index += 1;
         break;
+      case "--claude-command":
+        overrides.claudeCommand = next;
+        index += 1;
+        break;
       case "--no-html":
         overrides.writeHtml = false;
         break;
@@ -134,18 +143,122 @@ function getConfig(overrides: CliOverrides): PromptGatewayConfig {
   };
 }
 
+async function listenServer(
+  server: http.Server,
+  host: string,
+  port: number,
+): Promise<{ host: string; port: number; url: string }> {
+  await new Promise<void>((resolve) => {
+    server.listen(port, host, () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to resolve gateway address");
+  }
+
+  return {
+    host,
+    port: address.port,
+    url: `http://${host}:${address.port}`,
+  };
+}
+
 async function serve(overrides: CliOverrides): Promise<void> {
   const config = getConfig(overrides);
   const server = createGatewayServer(config);
+  const address = await listenServer(server, config.host, config.port);
 
-  await new Promise<void>((resolve) => {
-    server.listen(config.port, config.host, () => {
-      process.stdout.write(
-        `[prompt-gateway] listening on http://${config.host}:${config.port} -> output ${config.outputRoot}\n`,
-      );
-      resolve();
-    });
+  process.stdout.write(
+    `[prompt-gateway] listening on ${address.url} -> output ${config.outputRoot}\n`,
+  );
+}
+
+function getClaudeCommand(overrides: CliOverrides): string {
+  return overrides.claudeCommand || process.env.PROMPT_GATEWAY_CLAUDE_COMMAND || "claude";
+}
+
+function getWrappedUpstreamBaseUrl(
+  env: NodeJS.ProcessEnv,
+  overrides: CliOverrides,
+): string | undefined {
+  return (
+    overrides.upstreamBaseUrl ||
+    env.PROMPT_GATEWAY_UPSTREAM_URL ||
+    env.ANTHROPIC_BASE_URL ||
+    env.ANTHROPIC_API_URL
+  );
+}
+
+async function runClaude(overrides: CliOverrides, claudeArgs: string[]): Promise<void> {
+  if (
+    process.env.CLAUDE_CODE_USE_BEDROCK === "1" ||
+    process.env.CLAUDE_CODE_USE_VERTEX === "1" ||
+    process.env.CLAUDE_CODE_USE_FOUNDRY === "1"
+  ) {
+    throw new Error(
+      "prompt-gateway claude currently supports Anthropic-compatible ANTHROPIC_BASE_URL flows only. Bedrock/Vertex/Foundry passthrough is not implemented yet.",
+    );
+  }
+
+  const upstreamBaseUrl = getWrappedUpstreamBaseUrl(process.env, overrides);
+  const config = getConfig({
+    ...overrides,
+    port: overrides.port ?? 0,
+    upstreamBaseUrl,
   });
+
+  const server = createGatewayServer(config);
+  const address = await listenServer(server, config.host, config.port);
+  process.stdout.write(
+    `[prompt-gateway] wrapping Claude with gateway ${address.url} -> upstream ${upstreamBaseUrl || "https://api.anthropic.com"}\n`,
+  );
+
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ANTHROPIC_BASE_URL: address.url,
+    PROMPT_GATEWAY_UPSTREAM_URL: upstreamBaseUrl,
+  };
+
+  delete childEnv.ANTHROPIC_API_URL;
+
+  const claudeCommand = getClaudeCommand(overrides);
+  const child = spawn(claudeCommand, claudeArgs, {
+    stdio: "inherit",
+    env: childEnv,
+  });
+
+  const cleanup = async (): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  };
+
+  const forwardSignal = (signal: NodeJS.Signals): void => {
+    child.kill(signal);
+  };
+
+  process.on("SIGINT", forwardSignal);
+  process.on("SIGTERM", forwardSignal);
+
+  try {
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("exit", (code) => resolve(code));
+    });
+
+    process.exitCode = exitCode ?? 1;
+  } finally {
+    process.off("SIGINT", forwardSignal);
+    process.off("SIGTERM", forwardSignal);
+    await cleanup();
+  }
 }
 
 const args = process.argv.slice(2);
@@ -159,7 +272,25 @@ if (!command || command === "serve" || command.startsWith("--")) {
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   });
+} else if (command === "claude") {
+  if (args[1] === "--help" || args[1] === "-h") {
+    showHelp();
+    process.exit(0);
+  }
+
+  const splitIndex = args.indexOf("--");
+  const optionArgs = splitIndex === -1 ? [] : args.slice(1, splitIndex);
+  const claudeArgs = splitIndex === -1 ? args.slice(1) : args.slice(splitIndex + 1);
+  const overrides = parseArgs(optionArgs);
+
+  runClaude(overrides, claudeArgs).catch((error) => {
+    const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });
 } else {
-  process.stderr.write("Usage: prompt-gateway [serve] [--port 8787] [--upstream-url <url>]\n");
+  process.stderr.write(
+    "Usage: prompt-gateway [serve] [--port 8787] [--upstream-url <url>]\n       prompt-gateway claude [--claude-command claude] [-- --claude-args]\n",
+  );
   process.exitCode = 1;
 }

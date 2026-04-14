@@ -3,3 +3,4 @@ dist/
 .claude/prompt-tracker/
 coverage/
 .artifacts/
+.tmp-verify

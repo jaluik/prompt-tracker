@@ -95,6 +95,39 @@ http://127.0.0.1:8787
 - `.claude/prompt-tracker/captures/YYYY-MM-DD/*.json`
 - `.claude/prompt-tracker/html/YYYY-MM-DD/*.html`
 
+## 无需改配置文件的启动方式
+
+如果你不想手改 Claude Code 配置文件，可以使用包装命令：
+
+```bash
+prompt-gateway claude
+```
+
+它会自动：
+
+- 启动本地 prompt gateway
+- 临时把 `ANTHROPIC_BASE_URL` 指到本地 gateway
+- 再启动 `claude`
+
+如果你原本已经配置了自定义 `ANTHROPIC_BASE_URL`，包装命令会把它保留下来并作为 gateway 的上游继续转发，所以 Anthropic-compatible 的自定义 base URL 仍然能被拦截。
+
+给 Claude CLI 传参数时，使用 `--` 分隔：
+
+```bash
+prompt-gateway claude -- --print "hello"
+```
+
+如果你的 Claude 可执行文件不叫 `claude`，可以这样指定：
+
+```bash
+prompt-gateway claude --claude-command /path/to/claude
+```
+
+当前限制：
+
+- 该包装命令目前只支持 Anthropic-compatible 的 `ANTHROPIC_BASE_URL` 流程
+- `CLAUDE_CODE_USE_BEDROCK=1`、`CLAUDE_CODE_USE_VERTEX=1`、`CLAUDE_CODE_USE_FOUNDRY=1` 的透传包装还没有实现
+
 ## 现在怎么用
 
 1. 启动代理：`npx @jaluik/prompt-tracker`
@@ -113,6 +146,12 @@ npx @jaluik/prompt-tracker --no-html
 
 ```bash
 npx @jaluik/prompt-tracker --help
+```
+
+如果你希望不改 Claude Code 配置，直接用包装模式：
+
+```bash
+npx @jaluik/prompt-tracker claude
 ```
 
 ## 开发命令
