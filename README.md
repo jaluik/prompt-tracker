@@ -164,6 +164,41 @@ pnpm build
 pnpm pack:dry
 ```
 
+## 发版流程
+
+发版由 GitHub Actions 自动完成，前提是仓库里已经配置好 `NPM_TOKEN` secret。
+
+日常提交到 `master` 时会自动执行：
+
+- `pnpm check`
+- `pnpm test`
+
+当你推送形如 `v*` 的 tag 时会自动执行完整发布流程：
+
+- `pnpm check`
+- `pnpm test`
+- `pnpm build`
+- `pnpm pack:dry`
+- 校验 tag 版本和 `package.json` 中的 `version` 一致
+- 发布到 npm
+
+推荐发布步骤：
+
+1. 更新 `package.json` 中的 `version`
+2. 提交代码并推送到 `master`
+3. 创建并推送对应 tag，例如：
+
+```bash
+git tag v0.0.1
+git push origin v0.0.1
+```
+
+注意：
+
+- tag 必须和 `package.json` 的版本一致，例如 `package.json` 是 `0.0.1`，则 tag 必须是 `v0.0.1`
+- 如果 GitHub Actions 的 release job 失败，npm 不会发布成功
+- 建议每次发版前先确认 `master` 上最近一次 CI 已通过
+
 ## 提交约束
 
 - `pre-commit`: 通过 `lint-staged` 对暂存文件执行 `biome check --write`
