@@ -166,7 +166,7 @@ pnpm pack:dry
 
 ## 发版流程
 
-发版由 GitHub Actions 自动完成，前提是仓库里已经配置好 `NPM_TOKEN` secret。
+发版由 GitHub Actions 自动完成。当前仓库使用 npm Trusted Publishing，不再依赖 `NPM_TOKEN`。
 
 日常提交到 `master` 时会自动执行：
 
@@ -180,7 +180,7 @@ pnpm pack:dry
 - `pnpm build`
 - `pnpm pack:dry`
 - 校验 tag 版本和 `package.json` 中的 `version` 一致
-- 发布到 npm
+- 通过 Trusted Publishing 发布到 npm
 
 推荐发布步骤：
 
@@ -198,6 +198,7 @@ git push origin v0.0.1
 - tag 必须和 `package.json` 的版本一致，例如 `package.json` 是 `0.0.1`，则 tag 必须是 `v0.0.1`
 - 如果 GitHub Actions 的 release job 失败，npm 不会发布成功
 - 建议每次发版前先确认 `master` 上最近一次 CI 已通过
+- 当前发布依赖 npm 包设置里的 Trusted Publisher 配置，且 workflow 文件名必须是 `ci-cd.yml`
 
 ## 提交约束
 
