@@ -1,6 +1,6 @@
 {
   "name": "prompt-gateway",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Local LLM gateway for capturing Claude Code prompt payloads.",
   "repository": {
     "type": "git",
