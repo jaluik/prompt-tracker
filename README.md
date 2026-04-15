@@ -2,7 +2,7 @@
 
 本项目实现了一个本地 TypeScript LLM gateway，用来拦截 Claude Code 发往 `/v1/messages` 的最终请求体，并把请求记录为 JSON 与 HTML。
 
-当前工程已经按作用域包 `@jaluik/prompt-tracker` 配置，适合发布为 npm 包后直接给外部使用。
+当前工程现在按无 scope 包 `prompt-gateway` 配置，可以直接发布为 npm 公共包并给外部使用。
 
 ## 功能
 
@@ -15,13 +15,13 @@
 ## 作为 npm 包使用
 
 ```bash
-npx @jaluik/prompt-tracker
+npx prompt-gateway
 ```
 
 或者全局安装后使用：
 
 ```bash
-npm install -g @jaluik/prompt-tracker
+npm install -g prompt-gateway
 prompt-gateway
 ```
 
@@ -42,26 +42,26 @@ http://127.0.0.1:8787
 默认输出目录：
 
 ```text
-.claude/prompt-tracker
+.claude/prompt-gateway
 ```
 
 最简单的启动方式：
 
 ```bash
-npx @jaluik/prompt-tracker
+npx prompt-gateway
 ```
 
 如果你想显式指定上游和输出目录：
 
 ```bash
-npx @jaluik/prompt-tracker --upstream-url https://api.anthropic.com --output ./.claude/prompt-tracker
+npx prompt-gateway --upstream-url https://api.anthropic.com --output ./.claude/prompt-gateway
 ```
 
 ## 环境变量
 
 - `PROMPT_GATEWAY_HOST`: 监听主机，默认 `127.0.0.1`
 - `PROMPT_GATEWAY_PORT`: 监听端口，默认 `8787`
-- `PROMPT_GATEWAY_OUTPUT_ROOT`: 输出目录，默认 `.claude/prompt-tracker`
+- `PROMPT_GATEWAY_OUTPUT_ROOT`: 输出目录，默认 `.claude/prompt-gateway`
 - `PROMPT_GATEWAY_WRITE_JSON`: 是否写 JSON，默认 `true`
 - `PROMPT_GATEWAY_WRITE_HTML`: 是否写 HTML，默认 `true`
 - `PROMPT_GATEWAY_HTML_TITLE`: HTML 标题
@@ -92,8 +92,8 @@ http://127.0.0.1:8787
 
 这样 Claude Code 发起的 `/v1/messages` 请求会先进入本地代理，生成以下产物：
 
-- `.claude/prompt-tracker/captures/YYYY-MM-DD/*.json`
-- `.claude/prompt-tracker/html/YYYY-MM-DD/*.html`
+- `.claude/prompt-gateway/captures/YYYY-MM-DD/*.json`
+- `.claude/prompt-gateway/html/YYYY-MM-DD/*.html`
 
 ## 无需改配置文件的启动方式
 
@@ -130,28 +130,28 @@ prompt-gateway claude --claude-command /path/to/claude
 
 ## 现在怎么用
 
-1. 启动代理：`npx @jaluik/prompt-tracker`
+1. 启动代理：`npx prompt-gateway`
 2. 把 Claude Code 的 base URL 指到 `http://127.0.0.1:8787`
 3. 正常使用 Claude Code
 4. 打开生成结果：
-   `open .claude/prompt-tracker/html`
+   `open .claude/prompt-gateway/html`
 
 如果你只想看 JSON，不生成 HTML：
 
 ```bash
-npx @jaluik/prompt-tracker --no-html
+npx prompt-gateway --no-html
 ```
 
 如果你想看帮助：
 
 ```bash
-npx @jaluik/prompt-tracker --help
+npx prompt-gateway --help
 ```
 
 如果你希望不改 Claude Code 配置，直接用包装模式：
 
 ```bash
-npx @jaluik/prompt-tracker claude
+npx prompt-gateway claude
 ```
 
 ## 开发命令

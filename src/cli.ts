@@ -30,11 +30,11 @@ function showHelp(): void {
   process.stdout.write(`Claude Code Prompt Gateway
 
 Usage:
-  npx @jaluik/prompt-tracker
-  npx @jaluik/prompt-tracker --port 8787 --upstream-url https://api.anthropic.com
-  npx @jaluik/prompt-tracker claude
+  npx prompt-gateway
+  npx prompt-gateway --port 8787 --upstream-url https://api.anthropic.com
+  npx prompt-gateway claude
   prompt-gateway
-  prompt-gateway --output ./.claude/prompt-tracker
+  prompt-gateway --output ./.claude/prompt-gateway
 
 Options:
   --host <value>              Listen host
@@ -129,7 +129,7 @@ function getConfig(overrides: CliOverrides): PromptGatewayConfig {
     port: overrides.port || Number.parseInt(process.env.PROMPT_GATEWAY_PORT || "8787", 10),
     outputRoot:
       overrides.outputRoot ||
-      path.resolve(process.env.PROMPT_GATEWAY_OUTPUT_ROOT || ".claude/prompt-tracker"),
+      path.resolve(process.env.PROMPT_GATEWAY_OUTPUT_ROOT || ".claude/prompt-gateway"),
     writeJson: overrides.writeJson ?? parseBoolean(process.env.PROMPT_GATEWAY_WRITE_JSON, true),
     writeHtml: overrides.writeHtml ?? parseBoolean(process.env.PROMPT_GATEWAY_WRITE_HTML, true),
     htmlTitle:
