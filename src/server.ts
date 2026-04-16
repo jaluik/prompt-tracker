@@ -20,6 +20,18 @@ const HOP_BY_HOP_HEADERS = new Set([
   "content-length",
 ]);
 
+function getRequestPathname(url: string | undefined): string {
+  if (!url) {
+    return "/";
+  }
+
+  try {
+    return new URL(url, "http://127.0.0.1").pathname;
+  } catch {
+    return url;
+  }
+}
+
 async function readRequestBody(req: http.IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
 
@@ -61,7 +73,7 @@ function writeResponseHead(res: http.ServerResponse, upstream: Response): void {
 
 export function createGatewayServer(config: PromptGatewayConfig): http.Server {
   return http.createServer(async (req, res) => {
-    const requestPath = req.url ?? "/";
+    const requestPath = getRequestPathname(req.url);
 
     if (req.method !== "POST" || requestPath !== "/v1/messages") {
       res.statusCode = 404;
