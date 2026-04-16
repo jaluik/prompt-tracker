@@ -4,7 +4,7 @@
   "description": "Local LLM gateway for capturing Claude Code prompt payloads.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jaluik/prompt-tracker"
+    "url": "https://github.com/jaluik/prompt-gateway"
   },
   "type": "module",
   "packageManager": "pnpm@8.15.9",
