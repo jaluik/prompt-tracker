@@ -1,130 +1,103 @@
-# Claude Code Prompt Gateway
+# prompt-gateway
 
-`prompt-gateway` 是一个本地代理，用来拦截 Claude Code 发往 `/v1/messages` 的最终请求，并把请求记录成可回看、可检索的本地数据。
+`prompt-gateway` 用来包一层启动 Claude Code，拦截 Claude Code 发往 `/v1/messages` 的最终请求，并把这些请求保存到本地，方便你回看、排查和分享上下文。
 
-它适合在这些场景里使用：
+它面向的核心场景很直接：
 
-- 想确认 Claude Code 最终到底发了什么 prompt
-- 想排查 system prompt、messages、参数拼装是否符合预期
-- 想保留请求记录，方便复盘或分享问题上下文
+- 想知道 Claude Code 最终到底发了什么 prompt
+- 想检查 `system`、`messages`、`model`、`max_tokens` 是否符合预期
+- 想保留一份本地请求记录，方便排查问题
 
-## 你能得到什么
+## 它是怎么工作的
 
-- 透明代理 Claude Code 的 `/v1/messages` 请求
-- 记录 request body、session、响应状态和耗时
-- 默认脱敏常见敏感请求头
-- 内置本地网页，可直接查看历史记录和单条详情
-- 同时兼容流式和非流式上游响应
+你不用手动改 Claude Code 的代理地址。
 
-## 运行要求
-
-- 作为 npm 包使用、运行 CLI、使用代理功能：Node.js `16` 或更高版本
-- 如果你是从源码开发、执行 `pnpm install`、构建前端或参与维护：建议使用 Node.js `18` 或更高版本
-
-也就是说：
-
-- `prompt-gateway` 的发布产物和实际运行路径支持 Node 16
-- 当前仓库的开发工具链不把 Node 16 作为源码开发基线
-
-最简单的启动方式：
-
-```bash
-npx prompt-gateway
-```
-
-也可以全局安装后使用：
-
-```bash
-npm install -g prompt-gateway
-prompt-gateway
-```
-
-默认监听地址：
-
-```text
-http://127.0.0.1:8787
-```
-
-默认输出目录：
-
-```text
-.claude/prompt-gateway
-```
-
-启动后可以直接在浏览器打开：
-
-```text
-http://127.0.0.1:8787/
-```
-
-## 推荐用法
-
-### 方式一：直接当本地代理使用
-
-1. 启动 gateway：
-
-```bash
-npx prompt-gateway
-```
-
-2. 把 Claude Code 的 base URL 指到：
-
-```text
-http://127.0.0.1:8787
-```
-
-3. 正常使用 Claude Code。
-4. 在浏览器打开本地页面查看记录：
-
-```text
-http://127.0.0.1:8787/
-```
-
-请求会默认写到：
-
-- `.claude/prompt-gateway/captures/YYYY-MM-DD/*.json`
-- `.claude/prompt-gateway/html/YYYY-MM-DD/*.html`
-
-### 方式二：不改配置，直接包装启动 Claude Code
-
-如果你不想手动改 Claude Code 配置，可以直接运行：
+推荐方式是直接用 `prompt-gateway` 来启动 Claude Code：
 
 ```bash
 npx prompt-gateway claude
 ```
 
-它会自动：
+启动后它会做几件事：
 
-- 启动本地 prompt gateway
-- 临时把 `ANTHROPIC_BASE_URL` 指到本地 gateway
-- 再启动 `claude`
+- 启动一个本地 HTTP gateway
+- 把当前 Claude Code 进程的 `ANTHROPIC_BASE_URL` 临时改到本地 gateway
+- 把真实上游地址保留下来，继续转发到真正的 Anthropic-compatible endpoint
+- 把每次请求记录成 JSON，并可选生成单条 HTML
+- 提供一个本地网页查看历史记录和详情
 
-如果你已经设置了自定义 `ANTHROPIC_BASE_URL`，包装模式会把它保留为真实上游，再由本地 gateway 转发。
+## 安装和要求
 
-给 Claude CLI 透传参数时，使用 `--`：
+作为 npm 包运行时支持：
+
+- Node.js `16` 或更高版本
+
+最简单的使用方式：
+
+```bash
+npx prompt-gateway claude
+```
+
+也可以全局安装：
+
+```bash
+npm install -g prompt-gateway
+prompt-gateway claude
+```
+
+## 快速开始
+
+1. 直接启动 Claude Code：
+
+```bash
+npx prompt-gateway claude
+```
+
+2. 正常使用 Claude Code。
+
+3. 在浏览器里打开本地查看页：
+
+```text
+http://127.0.0.1:8787/
+```
+
+默认情况下，请求会写到：
+
+```text
+.claude/prompt-gateway/captures/YYYY-MM-DD/*.json
+.claude/prompt-gateway/html/YYYY-MM-DD/*.html
+```
+
+## 常用用法
+
+透传 Claude Code 参数：
 
 ```bash
 npx prompt-gateway claude -- --print "hello"
 ```
 
-如果你的 Claude 可执行文件不叫 `claude`，可以这样指定：
+如果你的 Claude 可执行文件不叫 `claude`：
 
 ```bash
 npx prompt-gateway claude --claude-command /path/to/claude
 ```
 
-## 常用命令
-
-指定上游和输出目录：
+指定真实上游地址：
 
 ```bash
-npx prompt-gateway --upstream-url https://api.anthropic.com --output ./.claude/prompt-gateway
+npx prompt-gateway claude --upstream-url https://api.anthropic.com
 ```
 
-只保留 JSON，不生成 HTML 文件：
+指定输出目录：
 
 ```bash
-npx prompt-gateway --no-html
+npx prompt-gateway claude --output ./.claude/prompt-gateway
+```
+
+只写 JSON，不生成单条 HTML：
+
+```bash
+npx prompt-gateway claude --no-html
 ```
 
 查看帮助：
@@ -133,26 +106,85 @@ npx prompt-gateway --no-html
 npx prompt-gateway --help
 ```
 
-## 环境变量
+## 你能看到什么
 
-- `PROMPT_GATEWAY_HOST`: 监听主机，默认 `127.0.0.1`
-- `PROMPT_GATEWAY_PORT`: 监听端口，默认 `8787`
-- `PROMPT_GATEWAY_OUTPUT_ROOT`: 输出目录，默认 `.claude/prompt-gateway`
-- `PROMPT_GATEWAY_WRITE_JSON`: 是否写 JSON，默认 `true`
-- `PROMPT_GATEWAY_WRITE_HTML`: 是否写 HTML，默认 `true`
-- `PROMPT_GATEWAY_HTML_TITLE`: 页面标题
-- `PROMPT_GATEWAY_UPSTREAM_URL`: 上游 base URL，例如 `https://api.anthropic.com`
-- `PROMPT_GATEWAY_UPSTREAM_API_KEY`: 上游 API Key
-- `PROMPT_GATEWAY_UPSTREAM_API_VERSION`: 上游 `anthropic-version`
+每条捕获记录都会保存这些信息：
 
-如果没有显式设置上游，程序还会尝试读取这些兼容变量：
+- 请求方法和路径
+- Claude Code session id
+- 脱敏后的请求头
+- 原始请求体
+- 提取后的 `system`、`messages`、`model`、`max_tokens`、`stream`
+- 响应状态、耗时、是否成功、错误信息
+- 一段可快速浏览的 prompt 预览文本
+
+其中常见敏感请求头会默认脱敏，包括：
+
+- `authorization`
+- `x-api-key`
+- `proxy-authorization`
+- `cookie`
+- `set-cookie`
+
+## 本地网页
+
+启动后可以在本地网页里查看：
+
+- 历史请求列表
+- 单条请求详情
+- prompt 预览
+- 已保存的 JSON 捕获记录
+
+默认地址：
+
+```text
+http://127.0.0.1:8787/
+```
+
+## 配置项
+
+CLI 参数：
+
+- `--host <value>`：监听地址，默认 `127.0.0.1`
+- `--port <value>`：监听端口，默认 `8787`
+- `--output <path>`：输出目录，默认 `.claude/prompt-gateway`
+- `--upstream-url <url>`：真实上游 base URL
+- `--api-key <value>`：上游 API key
+- `--api-version <value>`：`anthropic-version` 请求头
+- `--html-title <value>`：本地网页标题
+- `--timezone <value>`：页面展示用时区标签
+- `--claude-command <value>`：Claude 可执行文件路径，默认 `claude`
+- `--no-html`：不写 HTML 文件
+- `--no-json`：不写 JSON 文件
+
+环境变量：
+
+- `PROMPT_GATEWAY_HOST`
+- `PROMPT_GATEWAY_PORT`
+- `PROMPT_GATEWAY_OUTPUT_ROOT`
+- `PROMPT_GATEWAY_WRITE_JSON`
+- `PROMPT_GATEWAY_WRITE_HTML`
+- `PROMPT_GATEWAY_HTML_TITLE`
+- `PROMPT_GATEWAY_TIMEZONE`
+- `PROMPT_GATEWAY_UPSTREAM_URL`
+- `PROMPT_GATEWAY_UPSTREAM_API_KEY`
+- `PROMPT_GATEWAY_UPSTREAM_API_VERSION`
+- `PROMPT_GATEWAY_CLAUDE_COMMAND`
+
+如果没有显式指定上游，程序也会读取这些兼容变量：
 
 - `ANTHROPIC_BASE_URL`
 - `ANTHROPIC_API_URL`
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_VERSION`
 
-最终默认会转发到：
+默认真实上游是：
+
+```text
+https://api.anthropic.com
+```
+
+默认转发目标是：
 
 ```text
 https://api.anthropic.com/v1/messages
@@ -160,13 +192,12 @@ https://api.anthropic.com/v1/messages
 
 ## 当前限制
 
-- `prompt-gateway claude` 目前只覆盖 Anthropic-compatible 的 `ANTHROPIC_BASE_URL` 流程
+`prompt-gateway claude` 目前只覆盖 Anthropic-compatible 的 `ANTHROPIC_BASE_URL` 流程。
+
+下面这些模式当前还没有做透传包装：
+
 - `CLAUDE_CODE_USE_BEDROCK=1`
 - `CLAUDE_CODE_USE_VERTEX=1`
 - `CLAUDE_CODE_USE_FOUNDRY=1`
 
-以上几种透传包装当前还没有实现。
-
-## 开发文档
-
-如果你是维护者，或者需要查看本地开发、测试、发版、提交规范，请看 [DEVELOPING.md](./DEVELOPING.md)。
+维护者相关的开发、测试和发布说明见 [DEVELOPING.md](./DEVELOPING.md)。
