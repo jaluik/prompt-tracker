@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 type CaptureListItem = {
@@ -84,9 +84,11 @@ const COPY = {
     themeLight: "Light",
     themeDark: "Dark",
     backToTop: "Back to top",
+    clearSearch: "Clear",
     heroEyebrow: "Capture Dashboard",
     heroTitle: "Prompt capture dashboard",
-    heroText: "",
+    heroText:
+      "Scan recent requests, spot failures quickly, and open a readable breakdown without leaving the browser.",
     detailEyebrow: "Request Detail",
     detailTitle: "Inspect one captured request",
     detailText:
@@ -139,10 +141,22 @@ const COPY = {
     requestDuration: "Duration",
     requestStreaming: "Streaming",
     requestMaxTokens: "Max tokens",
+    quickOverview: "Overview",
+    quickReadable: "Readable prompt",
+    quickRaw: "Raw payloads",
+    responseSummary: "Response summary",
+    responseSummaryDesc:
+      "Start here to understand what happened before diving into the prompt body.",
+    rawPayloads: "Raw payloads",
+    rawPayloadsDesc: "Original structured data kept nearby for exact verification.",
+    inspectRequest: "Inspect request",
+    promptMessages: "Prompt messages",
+    sessionShort: "Session",
     missing: "missing",
     enabled: "Enabled",
     disabled: "Disabled",
     blocks: "block(s)",
+    openByDefault: "Open by default",
   },
   zh: {
     appTitle: "Prompt Gateway",
@@ -154,9 +168,10 @@ const COPY = {
     themeLight: "浅色",
     themeDark: "深色",
     backToTop: "回到顶部",
+    clearSearch: "清除",
     heroEyebrow: "记录面板",
     heroTitle: "Prompt 记录面板",
-    heroText: "",
+    heroText: "快速扫一眼最近请求，优先发现异常，再进入单条详情做可读化排查。",
     detailEyebrow: "请求详情",
     detailTitle: "检查单条捕获请求",
     detailText:
@@ -208,10 +223,21 @@ const COPY = {
     requestDuration: "耗时",
     requestStreaming: "流式",
     requestMaxTokens: "最大 Token",
+    quickOverview: "概览",
+    quickReadable: "可读 Prompt",
+    quickRaw: "原始载荷",
+    responseSummary: "响应概览",
+    responseSummaryDesc: "先看结果，再决定是否继续深入 Prompt 正文。",
+    rawPayloads: "原始载荷",
+    rawPayloadsDesc: "保留原始结构化数据，方便需要时做精确核对。",
+    inspectRequest: "查看请求",
+    promptMessages: "消息数",
+    sessionShort: "会话",
     missing: "缺失",
     enabled: "已开启",
     disabled: "已关闭",
     blocks: "个区块",
+    openByDefault: "默认展开",
   },
 } as const;
 
@@ -230,11 +256,15 @@ function formatDate(value: string, language: Language): string {
   }).format(new Date(value));
 }
 
-function normalizeText(value: string): string {
+function normalizeText(value: string | null | undefined): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
   return value.replaceAll("\\r\\n", "\n").replaceAll("\\n", "\n");
 }
 
-function formatPreview(value: string, fallback: string): string {
+function formatPreview(value: string | null | undefined, fallback: string): string {
   const trimmed = normalizeText(value).trim();
   if (!trimmed) {
     return fallback;
@@ -368,6 +398,14 @@ function statusText(ok: boolean, status: number, copy: (typeof COPY)[Language]):
   return ok ? `${copy.success} · ${status}` : `${copy.error} · ${status}`;
 }
 
+function compactSessionId(value: string | null, fallback: string): string {
+  if (!value) {
+    return fallback;
+  }
+
+  return value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
+}
+
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
     <article className="summary-card">
@@ -430,29 +468,62 @@ function KeyValueList({ items }: { items: Array<{ label: string; value: string }
   );
 }
 
+function AnchorNav({ items }: { items: Array<{ href: string; label: string }> }) {
+  return (
+    <nav aria-label="Section navigation" className="anchor-nav">
+      {items.map((item) => (
+        <a className="anchor-link" href={item.href} key={item.href}>
+          {item.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+function DetailSummaryCard({
+  label,
+  value,
+  hoverValue,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  hoverValue?: string;
+  tone?: "default" | "success" | "danger";
+}) {
+  return (
+    <article className={`detail-summary-card ${tone}`}>
+      <span>{label}</span>
+      <strong title={hoverValue}>{value}</strong>
+    </article>
+  );
+}
+
 function JsonPanel({
   title,
   value,
   showFullJsonText,
+  openByDefaultText,
 }: {
   title: string;
   value: unknown;
   showFullJsonText: string;
+  openByDefaultText: string;
 }) {
   const text = JSON.stringify(value, null, 2);
   const shouldCollapse = text.length > COLLAPSE_THRESHOLD;
 
   return (
-    <section className="panel">
-      <SectionHeader title={title} />
-      {shouldCollapse ? (
-        <details className="collapsible-panel">
-          <summary>{showFullJsonText}</summary>
-          <pre>{text}</pre>
-        </details>
-      ) : (
-        <pre>{text}</pre>
-      )}
+    <section className="panel raw-panel">
+      <details className="raw-details" open={!shouldCollapse}>
+        <summary>
+          <span>{title}</span>
+          <span className="raw-summary-hint">
+            {shouldCollapse ? showFullJsonText : openByDefaultText}
+          </span>
+        </summary>
+        {shouldCollapse ? <pre>{text}</pre> : <pre>{text}</pre>}
+      </details>
     </section>
   );
 }
@@ -716,6 +787,7 @@ export function App() {
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [selectedError, setSelectedError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const copy = COPY[language];
 
@@ -835,7 +907,7 @@ export function App() {
   }, [captures]);
 
   const filteredCaptures = useMemo(() => {
-    const trimmedQuery = query.trim().toLowerCase();
+    const trimmedQuery = deferredQuery.trim().toLowerCase();
     if (!trimmedQuery) {
       return captures;
     }
@@ -852,7 +924,7 @@ export function App() {
 
       return haystack.includes(trimmedQuery);
     });
-  }, [captures, copy.error, copy.success, query]);
+  }, [captures, copy.error, copy.success, deferredQuery]);
 
   const controls = (
     <div className="topbar-controls">
@@ -928,6 +1000,33 @@ export function App() {
         ]
       : [];
 
+    const detailSummaryCards = selectedCapture
+      ? [
+          {
+            label: copy.requestResponse,
+            value: statusText(selectedCapture.response.ok, selectedCapture.response.status, copy),
+            tone: selectedCapture.response.ok ? "success" : "danger",
+          },
+          {
+            label: copy.requestDuration,
+            value: `${selectedCapture.response.durationMs} ms`,
+            tone: "default" as const,
+          },
+          {
+            label: copy.requestModel,
+            value: selectedCapture.derived.model ?? copy.unknownModel,
+            hoverValue: selectedCapture.derived.model ?? copy.unknownModel,
+            tone: "default" as const,
+          },
+          {
+            label: copy.sessionShort,
+            value: compactSessionId(selectedCapture.sessionId, copy.missing),
+            hoverValue: selectedCapture.sessionId ?? copy.missing,
+            tone: "default" as const,
+          },
+        ]
+      : [];
+
     return (
       <div className="app-shell">
         <TopBar
@@ -943,14 +1042,6 @@ export function App() {
           }
         />
 
-        <section className="hero-simple">
-          <div>
-            <p className="eyebrow">{copy.detailEyebrow}</p>
-            <h1>{copy.detailTitle}</h1>
-            <p className="hero-text">{copy.detailText}</p>
-          </div>
-        </section>
-
         {selectedLoading ? <div className="empty-state">{copy.loadingDetails}</div> : null}
         {selectedError ? (
           <div className="empty-state error" role="alert">
@@ -961,10 +1052,30 @@ export function App() {
         {selectedCapture ? (
           <main className="detail-shell">
             <section className="detail-main">
-              <section className="panel highlight-panel">
+              <section className="detail-summary-grid">
+                {detailSummaryCards.map((card) => (
+                  <DetailSummaryCard
+                    hoverValue={card.hoverValue}
+                    key={card.label}
+                    label={card.label}
+                    tone={card.tone}
+                    value={card.value}
+                  />
+                ))}
+              </section>
+
+              <AnchorNav
+                items={[
+                  { href: "#detail-overview", label: copy.quickOverview },
+                  { href: "#detail-readable", label: copy.quickReadable },
+                  { href: "#detail-raw", label: copy.quickRaw },
+                ]}
+              />
+
+              <section className="panel highlight-panel" id="detail-overview">
                 <SectionHeader
-                  title={copy.promptPreview}
-                  description={copy.promptPreviewDesc}
+                  title={copy.responseSummary}
+                  description={copy.responseSummaryDesc}
                   action={
                     <span className={selectedCapture.response.ok ? "status ok" : "status error"}>
                       {statusText(
@@ -975,45 +1086,68 @@ export function App() {
                     </span>
                   }
                 />
-                <PromptPreview
-                  showFullPreviewText={copy.showFullPreview}
-                  value={selectedCapture.derived.promptTextPreview || "(empty)"}
-                />
+                <div className="overview-grid">
+                  <section className="overview-subpanel">
+                    <SectionHeader
+                      title={copy.promptPreview}
+                      description={copy.promptPreviewDesc}
+                    />
+                    <PromptPreview
+                      showFullPreviewText={copy.showFullPreview}
+                      value={selectedCapture.derived.promptTextPreview || "(empty)"}
+                    />
+                  </section>
+                  <section className="overview-subpanel overview-facts">
+                    <SectionHeader title={copy.requestFacts} description={copy.requestFactsDesc} />
+                    <KeyValueList items={facts.slice(0, 5)} />
+                  </section>
+                </div>
               </section>
 
-              <HumanReadablePrompt
-                copy={copy}
-                messages={selectedCapture.derived.messages}
-                system={selectedCapture.derived.system}
-              />
+              <div id="detail-readable">
+                <HumanReadablePrompt
+                  copy={copy}
+                  messages={selectedCapture.derived.messages}
+                  system={selectedCapture.derived.system}
+                />
+              </div>
             </section>
 
             <aside className="detail-sidebar">
-              <section className="panel">
+              <section className="panel sidebar-sticky">
                 <SectionHeader title={copy.requestFacts} description={copy.requestFactsDesc} />
                 <KeyValueList items={facts} />
               </section>
 
-              <JsonPanel
-                showFullJsonText={copy.showFullJson}
-                title={copy.headers}
-                value={selectedCapture.requestHeaders.redacted}
-              />
-              <JsonPanel
-                showFullJsonText={copy.showFullJson}
-                title={copy.rawRequest}
-                value={selectedCapture.requestBody.raw}
-              />
-              <JsonPanel
-                showFullJsonText={copy.showFullJson}
-                title={copy.systemJson}
-                value={selectedCapture.derived.system}
-              />
-              <JsonPanel
-                showFullJsonText={copy.showFullJson}
-                title={copy.messagesJson}
-                value={selectedCapture.derived.messages}
-              />
+              <section className="panel" id="detail-raw">
+                <SectionHeader title={copy.rawPayloads} description={copy.rawPayloadsDesc} />
+                <div className="raw-panel-list">
+                  <JsonPanel
+                    openByDefaultText={copy.openByDefault}
+                    showFullJsonText={copy.showFullJson}
+                    title={copy.headers}
+                    value={selectedCapture.requestHeaders.redacted}
+                  />
+                  <JsonPanel
+                    openByDefaultText={copy.openByDefault}
+                    showFullJsonText={copy.showFullJson}
+                    title={copy.rawRequest}
+                    value={selectedCapture.requestBody.raw}
+                  />
+                  <JsonPanel
+                    openByDefaultText={copy.openByDefault}
+                    showFullJsonText={copy.showFullJson}
+                    title={copy.systemJson}
+                    value={selectedCapture.derived.system}
+                  />
+                  <JsonPanel
+                    openByDefaultText={copy.openByDefault}
+                    showFullJsonText={copy.showFullJson}
+                    title={copy.messagesJson}
+                    value={selectedCapture.derived.messages}
+                  />
+                </div>
+              </section>
             </aside>
           </main>
         ) : null}
@@ -1025,14 +1159,6 @@ export function App() {
   return (
     <div className="app-shell">
       <TopBar action={controls} subtitle={copy.appSubtitle} title={copy.appTitle} />
-
-      <section className="hero-simple">
-        <div>
-          <p className="eyebrow">{copy.heroEyebrow}</p>
-          <h1>{copy.heroTitle}</h1>
-          {copy.heroText ? <p className="hero-text">{copy.heroText}</p> : null}
-        </div>
-      </section>
 
       <section className="summary-grid">
         <SummaryCard label={copy.captures} value={String(stats.total)} />
@@ -1062,6 +1188,11 @@ export function App() {
                 value={query}
               />
             </label>
+            {query ? (
+              <button className="ghost-button" onClick={() => setQuery("")} type="button">
+                {copy.clearSearch}
+              </button>
+            ) : null}
           </div>
 
           {capturesLoading ? <div className="empty-state">{copy.loadingHistory}</div> : null}
