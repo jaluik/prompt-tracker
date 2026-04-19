@@ -131,7 +131,12 @@ export function capturePromptRequest(
       stream: Boolean(body?.stream),
       promptTextPreview: previewPrompt(body),
     },
-    response: responseMeta,
+    response: {
+      ...responseMeta,
+      body: {
+        raw: responseMeta.body,
+      },
+    },
   };
 }
 

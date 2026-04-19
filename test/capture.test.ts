@@ -42,6 +42,7 @@ test("capturePromptRequest extracts prompt metadata", () => {
       status: 200,
       durationMs: 42,
       ok: true,
+      body: { content: [{ type: "text", text: "hello back" }] },
     },
   );
 
@@ -52,6 +53,7 @@ test("capturePromptRequest extracts prompt metadata", () => {
   assert.equal(record.derived.stream, true);
   assert.match(record.derived.promptTextPreview, /system prompt/);
   assert.match(record.derived.promptTextPreview, /hello/);
+  assert.equal(record.response.body.raw && typeof record.response.body.raw, "object");
 });
 
 test("renderPromptCaptureHtml includes key fields", () => {
@@ -73,6 +75,7 @@ test("renderPromptCaptureHtml includes key fields", () => {
       status: 200,
       durationMs: 42,
       ok: true,
+      body: { content: [{ type: "text", text: "hello back" }] },
     },
   );
 
@@ -97,6 +100,7 @@ test("writeCaptureArtifacts creates dated output files", async () => {
       status: 200,
       durationMs: 1,
       ok: true,
+      body: null,
     },
   );
 
@@ -130,6 +134,7 @@ test("capture helpers list and resolve saved prompt captures", async () => {
       status: 200,
       durationMs: 12,
       ok: true,
+      body: { content: [{ type: "text", text: "first response" }] },
     },
   );
 
@@ -148,6 +153,7 @@ test("capture helpers list and resolve saved prompt captures", async () => {
       status: 500,
       durationMs: 24,
       ok: false,
+      body: { error: { message: "boom" } },
     },
   );
 

@@ -49,6 +49,9 @@ export interface PromptCaptureRecord {
     durationMs: number;
     ok: boolean;
     error?: string;
+    body: {
+      raw: unknown;
+    };
   };
 }
 
@@ -83,4 +86,5 @@ export interface CaptureResponseMeta {
   durationMs: number;
   ok: boolean;
   error?: string;
+  body: unknown;
 }

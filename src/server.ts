@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import fetch, { Headers, type Response } from "node-fetch";
 
@@ -61,6 +60,42 @@ async function readRequestBody(req: http.IncomingMessage): Promise<Buffer> {
   }
 
   return Buffer.concat(chunks);
+}
+
+async function forwardResponseAndCapture(
+  upstream: Response,
+  res: http.ServerResponse,
+): Promise<unknown> {
+  if (!upstream.body) {
+    res.end();
+    return null;
+  }
+
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of upstream.body) {
+    const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    chunks.push(bufferChunk);
+
+    if (!res.write(bufferChunk)) {
+      await new Promise<void>((resolve) => res.once("drain", resolve));
+    }
+  }
+
+  res.end();
+
+  const responseText = Buffer.concat(chunks).toString("utf8");
+  const contentType = upstream.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(responseText);
+    } catch {
+      return responseText;
+    }
+  }
+
+  return responseText;
 }
 
 function toHeaders(req: http.IncomingMessage): Headers {
@@ -198,6 +233,7 @@ export function createGatewayServer(config: PromptGatewayConfig): http.Server {
     let upstreamStatus = 502;
     let upstreamOk = false;
     let upstreamError: string | undefined;
+    let upstreamBody: unknown = null;
 
     try {
       const bodyBuffer = await readRequestBody(req);
@@ -222,17 +258,13 @@ export function createGatewayServer(config: PromptGatewayConfig): http.Server {
       upstreamStatus = upstreamResponse.status;
       upstreamOk = upstreamResponse.ok;
       writeResponseHead(res, upstreamResponse);
-
-      if (upstreamResponse.body) {
-        await pipeline(upstreamResponse.body, res);
-      } else {
-        res.end();
-      }
+      upstreamBody = await forwardResponseAndCapture(upstreamResponse, res);
     } catch (error) {
       upstreamError = error instanceof Error ? error.message : String(error);
       res.statusCode = 502;
       res.setHeader("content-type", "application/json; charset=utf-8");
       res.end(JSON.stringify({ error: "Upstream request failed", details: upstreamError }));
+      upstreamBody = { error: "Upstream request failed", details: upstreamError };
     } finally {
       const record = capturePromptRequest(
         {
@@ -249,6 +281,7 @@ export function createGatewayServer(config: PromptGatewayConfig): http.Server {
           durationMs: Date.now() - startedAt,
           ok: upstreamOk && !upstreamError,
           error: upstreamError,
+          body: upstreamBody,
         },
       );
 

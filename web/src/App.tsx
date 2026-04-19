@@ -41,6 +41,9 @@ type CaptureRecord = {
     durationMs: number;
     ok: boolean;
     error?: string;
+    body?: {
+      raw: unknown;
+    };
   };
 };
 
@@ -68,6 +71,7 @@ type MessageItem = {
 
 type Language = "en" | "zh";
 type Theme = "light" | "dark";
+type DetailTab = "system" | "user" | "response";
 
 const COLLAPSE_THRESHOLD = 600;
 const LANGUAGE_STORAGE_KEY = "prompt-gateway-language";
@@ -117,6 +121,13 @@ const COPY = {
     noPreview: "No prompt preview available.",
     requestFacts: "Request Facts",
     requestFactsDesc: "The fields you usually need first when debugging behavior.",
+    systemPrompt: "System Prompt",
+    systemPromptDesc: "System instructions included in this captured request.",
+    userPrompt: "User Prompt",
+    userPromptDesc: "User-role messages that were sent upstream in this request.",
+    modelResponse: "Model Response",
+    modelResponseDesc:
+      "Assistant-role history included in the request, plus the current upstream response state.",
     promptPreview: "Prompt Preview",
     promptPreviewDesc: "Fast overview of the prompt text that was sent upstream.",
     readablePrompt: "Readable Prompt",
@@ -125,6 +136,14 @@ const COPY = {
     messages: "Messages",
     noReadableBlocks: "No readable blocks found in this message.",
     noReadablePrompt: "No readable prompt content was found in this capture.",
+    noSystemPrompt: "No system prompt content was found in this capture.",
+    noUserPrompt: "No user prompt content was found in this capture.",
+    noModelResponse:
+      "No assistant-role history or captured response text was found in this capture.",
+    currentResponse: "Current response",
+    currentResponseDesc:
+      "Captured from the upstream response for this request, alongside status and duration.",
+    responseBody: "Response body",
     headers: "Headers",
     rawRequest: "Raw Request",
     systemJson: "System JSON",
@@ -156,7 +175,7 @@ const COPY = {
     enabled: "Enabled",
     disabled: "Disabled",
     blocks: "block(s)",
-    openByDefault: "Open by default",
+    openByDefault: "Expanded",
   },
   zh: {
     appTitle: "Prompt Gateway",
@@ -199,6 +218,12 @@ const COPY = {
     noPreview: "暂无 Prompt 预览。",
     requestFacts: "请求关键信息",
     requestFactsDesc: "调试请求时最常用的一组字段。",
+    systemPrompt: "系统 Prompt",
+    systemPromptDesc: "这次捕获请求里携带的系统级指令内容。",
+    userPrompt: "用户 Prompt",
+    userPromptDesc: "这次请求发往上游的 `user` 角色消息。",
+    modelResponse: "模型响应",
+    modelResponseDesc: "请求中携带的历史 `assistant` 消息，以及这次调用的响应状态。",
     promptPreview: "Prompt 预览",
     promptPreviewDesc: "快速查看这次请求发送到上游的核心文本内容。",
     readablePrompt: "可读 Prompt",
@@ -207,6 +232,12 @@ const COPY = {
     messages: "消息内容",
     noReadableBlocks: "这条消息里没有识别到可读文本块。",
     noReadablePrompt: "这条记录里没有识别到可读 Prompt 内容。",
+    noSystemPrompt: "这条记录里没有识别到系统 Prompt 内容。",
+    noUserPrompt: "这条记录里没有识别到用户 Prompt 内容。",
+    noModelResponse: "这条记录里没有识别到历史 assistant 消息，也没有捕获到可展示的响应文本。",
+    currentResponse: "当前响应",
+    currentResponseDesc: "这里展示的是这次请求从上游捕获到的响应内容，以及响应状态和耗时。",
+    responseBody: "响应正文",
     headers: "请求头",
     rawRequest: "原始请求",
     systemJson: "System JSON",
@@ -237,7 +268,7 @@ const COPY = {
     enabled: "已开启",
     disabled: "已关闭",
     blocks: "个区块",
-    openByDefault: "默认展开",
+    openByDefault: "已展开",
   },
 } as const;
 
@@ -378,6 +409,73 @@ function extractMessageItems(messages: unknown): MessageItem[] {
   });
 }
 
+function filterMessageItemsByRole(messages: MessageItem[], role: string): MessageItem[] {
+  return messages.filter((message) => message.role === role);
+}
+
+function extractSseResponseText(responseBody: string): string | null {
+  const segments: string[] = [];
+
+  for (const line of responseBody.split("\n")) {
+    if (!line.startsWith("data:")) {
+      continue;
+    }
+
+    const payload = line.slice("data:".length).trim();
+    if (!payload || payload === "[DONE]") {
+      continue;
+    }
+
+    try {
+      const event = JSON.parse(payload) as Record<string, unknown>;
+      const delta = asObject(event.delta);
+      const contentBlock = asObject(event.content_block);
+
+      if (typeof delta?.text === "string") {
+        segments.push(delta.text);
+        continue;
+      }
+
+      if (typeof contentBlock?.text === "string") {
+        segments.push(contentBlock.text);
+        continue;
+      }
+
+      if (typeof event.text === "string") {
+        segments.push(event.text);
+      }
+    } catch {}
+  }
+
+  const joined = segments.join("");
+  return joined.trim() ? joined : null;
+}
+
+function extractResponseBlocks(responseBody: unknown): MessageBlock[] {
+  const objectValue = asObject(responseBody);
+  if (objectValue && Array.isArray(objectValue.content)) {
+    return objectValue.content
+      .map((item) => toMessageBlock(item))
+      .filter((item): item is MessageBlock => item !== null);
+  }
+
+  if (typeof responseBody === "string") {
+    const sseText = extractSseResponseText(responseBody);
+    if (sseText) {
+      return [
+        {
+          id: `response-${sseText.slice(0, 48)}`,
+          text: sseText,
+          type: "response",
+        },
+      ];
+    }
+  }
+
+  const singleBlock = toMessageBlock(responseBody);
+  return singleBlock ? [singleBlock] : [];
+}
+
 function parseRoute(pathname: string): Route {
   if (pathname.startsWith("/captures/")) {
     return {
@@ -468,18 +566,6 @@ function KeyValueList({ items }: { items: Array<{ label: string; value: string }
   );
 }
 
-function AnchorNav({ items }: { items: Array<{ href: string; label: string }> }) {
-  return (
-    <nav aria-label="Section navigation" className="anchor-nav">
-      {items.map((item) => (
-        <a className="anchor-link" href={item.href} key={item.href}>
-          {item.label}
-        </a>
-      ))}
-    </nav>
-  );
-}
-
 function DetailSummaryCard({
   label,
   value,
@@ -496,6 +582,35 @@ function DetailSummaryCard({
       <span>{label}</span>
       <strong title={hoverValue}>{value}</strong>
     </article>
+  );
+}
+
+function MessageItemList({ items, copy }: { items: MessageItem[]; copy: (typeof COPY)[Language] }) {
+  return (
+    <div className="conversation-list">
+      {items.map((message) => (
+        <article className="conversation-card" key={message.id}>
+          <header className="conversation-header">
+            <span className="role-badge">{message.role}</span>
+            <span className="hint">
+              {message.blocks.length} {copy.blocks}
+            </span>
+          </header>
+          {message.blocks.length > 0 ? (
+            message.blocks.map((block) => (
+              <TextBlock
+                block={block}
+                closeText={copy.close}
+                key={block.id}
+                showFullBlockText={copy.showFullBlock}
+              />
+            ))
+          ) : (
+            <div className="empty-state">{copy.noReadableBlocks}</div>
+          )}
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -624,7 +739,7 @@ function HumanReadablePrompt({
   const systemBlocks = extractSystemBlocks(system);
   const messageItems = extractMessageItems(messages);
   const [activeTab, setActiveTab] = useState<"system" | "messages">(
-    systemBlocks.length > 0 ? "system" : "messages",
+    messageItems.length > 0 ? "messages" : "system",
   );
 
   return (
@@ -786,6 +901,7 @@ export function App() {
   const [selectedCapture, setSelectedCapture] = useState<CaptureRecord | null>(null);
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [selectedError, setSelectedError] = useState<string | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("system");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -859,6 +975,7 @@ export function App() {
       setSelectedCapture(null);
       setSelectedError(null);
       setSelectedLoading(false);
+      setActiveDetailTab("system");
       return;
     }
 
@@ -1027,6 +1144,28 @@ export function App() {
         ]
       : [];
 
+    const systemBlocks = selectedCapture ? extractSystemBlocks(selectedCapture.derived.system) : [];
+    const messageItems = selectedCapture
+      ? extractMessageItems(selectedCapture.derived.messages)
+      : [];
+    const userMessages = filterMessageItemsByRole(messageItems, "user");
+    const assistantMessages = filterMessageItemsByRole(messageItems, "assistant");
+    const responseBodyRaw = selectedCapture?.response.body?.raw ?? null;
+    const responseBlocks = selectedCapture ? extractResponseBlocks(responseBodyRaw) : [];
+    const responseFacts = selectedCapture
+      ? [
+          {
+            label: copy.requestResponse,
+            value: statusText(selectedCapture.response.ok, selectedCapture.response.status, copy),
+          },
+          { label: copy.requestDuration, value: `${selectedCapture.response.durationMs} ms` },
+          {
+            label: copy.requestStreaming,
+            value: selectedCapture.derived.stream ? copy.enabled : copy.disabled,
+          },
+        ]
+      : [];
+
     return (
       <div className="app-shell">
         <TopBar
@@ -1064,53 +1203,141 @@ export function App() {
                 ))}
               </section>
 
-              <AnchorNav
-                items={[
-                  { href: "#detail-overview", label: copy.quickOverview },
-                  { href: "#detail-readable", label: copy.quickReadable },
-                  { href: "#detail-raw", label: copy.quickRaw },
-                ]}
-              />
-
-              <section className="panel highlight-panel" id="detail-overview">
-                <SectionHeader
-                  title={copy.responseSummary}
-                  description={copy.responseSummaryDesc}
-                  action={
-                    <span className={selectedCapture.response.ok ? "status ok" : "status error"}>
-                      {statusText(
-                        selectedCapture.response.ok,
-                        selectedCapture.response.status,
-                        copy,
-                      )}
-                    </span>
-                  }
-                />
-                <div className="overview-grid">
-                  <section className="overview-subpanel">
-                    <SectionHeader
-                      title={copy.promptPreview}
-                      description={copy.promptPreviewDesc}
-                    />
-                    <PromptPreview
-                      showFullPreviewText={copy.showFullPreview}
-                      value={selectedCapture.derived.promptTextPreview || "(empty)"}
-                    />
-                  </section>
-                  <section className="overview-subpanel overview-facts">
-                    <SectionHeader title={copy.requestFacts} description={copy.requestFactsDesc} />
-                    <KeyValueList items={facts.slice(0, 5)} />
-                  </section>
-                </div>
-              </section>
-
-              <div id="detail-readable">
-                <HumanReadablePrompt
-                  copy={copy}
-                  messages={selectedCapture.derived.messages}
-                  system={selectedCapture.derived.system}
-                />
+              <div
+                className="tab-strip detail-tab-strip"
+                role="tablist"
+                aria-label={copy.detailSubtitle}
+              >
+                <button
+                  aria-selected={activeDetailTab === "system"}
+                  className={activeDetailTab === "system" ? "tab-button active" : "tab-button"}
+                  onClick={() => setActiveDetailTab("system")}
+                  role="tab"
+                  type="button"
+                >
+                  {copy.systemPrompt}
+                </button>
+                <button
+                  aria-selected={activeDetailTab === "user"}
+                  className={activeDetailTab === "user" ? "tab-button active" : "tab-button"}
+                  onClick={() => setActiveDetailTab("user")}
+                  role="tab"
+                  type="button"
+                >
+                  {copy.userPrompt}
+                </button>
+                <button
+                  aria-selected={activeDetailTab === "response"}
+                  className={activeDetailTab === "response" ? "tab-button active" : "tab-button"}
+                  onClick={() => setActiveDetailTab("response")}
+                  role="tab"
+                  type="button"
+                >
+                  {copy.modelResponse}
+                </button>
               </div>
+
+              {activeDetailTab === "system" ? (
+                <section className="panel highlight-panel" id="detail-system">
+                  <SectionHeader title={copy.systemPrompt} description={copy.systemPromptDesc} />
+                  <div className="category-stack">
+                    {systemBlocks.length > 0 ? (
+                      <div className="conversation-card system">
+                        {systemBlocks.map((block) => (
+                          <TextBlock
+                            block={block}
+                            closeText={copy.close}
+                            key={block.id}
+                            showFullBlockText={copy.showFullBlock}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="empty-state">{copy.noSystemPrompt}</div>
+                    )}
+                    <JsonPanel
+                      openByDefaultText={copy.openByDefault}
+                      showFullJsonText={copy.showFullJson}
+                      title={copy.systemJson}
+                      value={selectedCapture.derived.system}
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              {activeDetailTab === "user" ? (
+                <section className="panel" id="detail-user">
+                  <SectionHeader title={copy.userPrompt} description={copy.userPromptDesc} />
+                  <div className="category-stack">
+                    {userMessages.length > 0 ? (
+                      <MessageItemList copy={copy} items={userMessages} />
+                    ) : (
+                      <div className="empty-state">{copy.noUserPrompt}</div>
+                    )}
+                    <JsonPanel
+                      openByDefaultText={copy.openByDefault}
+                      showFullJsonText={copy.showFullJson}
+                      title={copy.messagesJson}
+                      value={selectedCapture.derived.messages}
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              {activeDetailTab === "response" ? (
+                <section className="panel" id="detail-response">
+                  <SectionHeader
+                    title={copy.modelResponse}
+                    description={copy.modelResponseDesc}
+                    action={
+                      <span className={selectedCapture.response.ok ? "status ok" : "status error"}>
+                        {statusText(
+                          selectedCapture.response.ok,
+                          selectedCapture.response.status,
+                          copy,
+                        )}
+                      </span>
+                    }
+                  />
+                  <div className="category-stack">
+                    {responseBlocks.length > 0 ? (
+                      <div className="conversation-card">
+                        <header className="conversation-header">
+                          <span className="role-badge">response</span>
+                          <span className="hint">
+                            {responseBlocks.length} {copy.blocks}
+                          </span>
+                        </header>
+                        {responseBlocks.map((block) => (
+                          <TextBlock
+                            block={block}
+                            closeText={copy.close}
+                            key={block.id}
+                            showFullBlockText={copy.showFullBlock}
+                          />
+                        ))}
+                      </div>
+                    ) : assistantMessages.length > 0 ? (
+                      <MessageItemList copy={copy} items={assistantMessages} />
+                    ) : (
+                      <div className="empty-state">{copy.noModelResponse}</div>
+                    )}
+                    <section className="response-note">
+                      <SectionHeader
+                        title={copy.currentResponse}
+                        description={copy.currentResponseDesc}
+                      />
+                      <KeyValueList items={responseFacts} />
+                    </section>
+                    <JsonPanel
+                      openByDefaultText={copy.openByDefault}
+                      showFullJsonText={copy.showFullJson}
+                      title={copy.responseBody}
+                      value={responseBodyRaw}
+                    />
+                  </div>
+                </section>
+              ) : null}
             </section>
 
             <aside className="detail-sidebar">
@@ -1119,35 +1346,20 @@ export function App() {
                 <KeyValueList items={facts} />
               </section>
 
-              <section className="panel" id="detail-raw">
-                <SectionHeader title={copy.rawPayloads} description={copy.rawPayloadsDesc} />
-                <div className="raw-panel-list">
-                  <JsonPanel
-                    openByDefaultText={copy.openByDefault}
-                    showFullJsonText={copy.showFullJson}
-                    title={copy.headers}
-                    value={selectedCapture.requestHeaders.redacted}
-                  />
-                  <JsonPanel
-                    openByDefaultText={copy.openByDefault}
-                    showFullJsonText={copy.showFullJson}
-                    title={copy.rawRequest}
-                    value={selectedCapture.requestBody.raw}
-                  />
-                  <JsonPanel
-                    openByDefaultText={copy.openByDefault}
-                    showFullJsonText={copy.showFullJson}
-                    title={copy.systemJson}
-                    value={selectedCapture.derived.system}
-                  />
-                  <JsonPanel
-                    openByDefaultText={copy.openByDefault}
-                    showFullJsonText={copy.showFullJson}
-                    title={copy.messagesJson}
-                    value={selectedCapture.derived.messages}
-                  />
-                </div>
-              </section>
+              <div className="raw-panel-list">
+                <JsonPanel
+                  openByDefaultText={copy.openByDefault}
+                  showFullJsonText={copy.showFullJson}
+                  title={copy.headers}
+                  value={selectedCapture.requestHeaders.redacted}
+                />
+                <JsonPanel
+                  openByDefaultText={copy.openByDefault}
+                  showFullJsonText={copy.showFullJson}
+                  title={copy.rawRequest}
+                  value={selectedCapture.requestBody.raw}
+                />
+              </div>
             </aside>
           </main>
         ) : null}
