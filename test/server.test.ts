@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+import zlib from "node:zlib";
 import fetch from "node-fetch";
 
 import { createGatewayServer } from "../src/server.js";
@@ -128,6 +129,69 @@ test("gateway streams upstream responses", async () => {
 
     assert.match(capture.response.body.raw, /"text":"hello "/);
     assert.match(capture.response.body.raw, /"text":"stream"/);
+  } finally {
+    await close(gatewayInfo.server);
+    await close(upstreamInfo.server);
+  }
+});
+
+test("gateway strips compression headers after decoding upstream responses", async () => {
+  const tempRoot = await createTempDir("prompt-gateway-gzip");
+  const upstream = http.createServer((_, res) => {
+    const body = Buffer.from(
+      JSON.stringify({
+        id: "msg_gzip",
+        type: "message",
+        content: [{ type: "text", text: "decoded ok" }],
+      }),
+    );
+    const gzippedBody = zlib.gzipSync(body);
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "content-encoding": "gzip",
+      "content-length": String(gzippedBody.length),
+    });
+    res.end(gzippedBody);
+  });
+  const upstreamInfo = await listen(upstream);
+  const gateway = createGatewayServer({
+    host: "127.0.0.1",
+    port: 0,
+    outputRoot: tempRoot,
+    writeJson: true,
+    writeHtml: false,
+    htmlTitle: "Prompt Capture",
+    upstreamOverrides: {
+      baseUrl: upstreamInfo.url,
+    },
+  });
+  const gatewayInfo = await listen(gateway);
+
+  try {
+    const response = await fetch(`${gatewayInfo.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet",
+        messages: [{ role: "user", content: "hello gzip" }],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-encoding"), null);
+    assert.equal(response.headers.get("content-length"), null);
+
+    const json = (await response.json()) as { id?: string; content?: Array<{ text?: string }> };
+    assert.equal(json.id, "msg_gzip");
+    assert.equal(json.content?.[0]?.text, "decoded ok");
+
+    const captureDir = path.join(tempRoot, "captures", "sessions", "missing-session");
+    const captureFiles = await waitForEntries(() => fs.readdir(captureDir), "capture file");
+    const captureFile = onlyEntry(captureFiles, "capture file");
+    const capture = JSON.parse(await fs.readFile(path.join(captureDir, captureFile), "utf8"));
+
+    assert.equal(capture.response.body.raw.id, "msg_gzip");
+    assert.equal(capture.response.body.raw.content[0].text, "decoded ok");
   } finally {
     await close(gatewayInfo.server);
     await close(upstreamInfo.server);

@@ -499,12 +499,27 @@ async function listCaptureFilePaths(outputRoot: string): Promise<string[]> {
   const paths: string[] = [];
 
   for (const sessionDir of sessionDirs) {
-    paths.push(...(await listJsonFiles(path.join(sessionRoot, sessionDir))));
+    paths.push(...(await listSessionCaptureFilePaths(outputRoot, sessionDir)));
   }
 
+  paths.push(...(await listLegacyCaptureFilePaths(outputRoot)));
+  return paths;
+}
+
+async function listSessionCaptureFilePaths(
+  outputRoot: string,
+  sessionSlug: string,
+): Promise<string[]> {
+  return listJsonFiles(path.join(outputRoot, "captures", SESSION_CAPTURE_DIR, sessionSlug));
+}
+
+async function listLegacyCaptureFilePaths(outputRoot: string): Promise<string[]> {
+  const capturesRoot = path.join(outputRoot, "captures");
   const legacyDayDirs = (await listDirectories(capturesRoot)).filter((dir) =>
     /^\d{4}-\d{2}-\d{2}$/.test(dir),
   );
+  const paths: string[] = [];
+
   for (const dayDir of legacyDayDirs) {
     paths.push(...(await listJsonFiles(path.join(capturesRoot, dayDir))));
   }
@@ -601,15 +616,6 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-async function listPromptCaptureRecords(outputRoot: string): Promise<PromptCaptureRecord[]> {
-  const files = await listCaptureFilePaths(outputRoot);
-  const records = (
-    await mapWithConcurrency(files, CAPTURE_READ_CONCURRENCY, (file) => readCaptureFile(file))
-  ).filter((record): record is PromptCaptureRecord => Boolean(record));
-
-  return records.sort((left, right) => right.timestampMs - left.timestampMs);
-}
-
 export async function listPromptSessions(outputRoot: string): Promise<PromptSessionListItem[]> {
   const captures = await listPromptCaptureIndexItems(outputRoot);
   const sessions = new Map<string, PromptCaptureListItem[]>();
@@ -664,10 +670,21 @@ export async function listPromptCapturesBySessionId(
   outputRoot: string,
   sessionId: string | null,
 ): Promise<PromptCaptureRecord[]> {
-  const records = await listPromptCaptureRecords(outputRoot);
-  return records
+  const sessionFiles = await listSessionCaptureFilePaths(outputRoot, getSessionSlug(sessionId));
+  const legacyFiles = await listLegacyCaptureFilePaths(outputRoot);
+  const records = (
+    await mapWithConcurrency([...sessionFiles, ...legacyFiles], CAPTURE_READ_CONCURRENCY, (file) =>
+      readCaptureFile(file),
+    )
+  ).filter((record): record is PromptCaptureRecord => Boolean(record));
+
+  return dedupeCaptureRecords(records)
     .filter((record) => record.sessionId === sessionId)
     .sort((left, right) => left.timestampMs - right.timestampMs);
+}
+
+function dedupeCaptureRecords(records: PromptCaptureRecord[]): PromptCaptureRecord[] {
+  return Array.from(new Map(records.map((record) => [record.requestId, record])).values());
 }
 
 export async function getPromptCaptureById(

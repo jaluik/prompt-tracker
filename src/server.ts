@@ -30,6 +30,8 @@ const HOP_BY_HOP_HEADERS = new Set([
   "content-length",
 ]);
 
+const DECODED_RESPONSE_HEADERS = new Set(["content-encoding"]);
+
 const WEB_DIST_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "web");
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -119,7 +121,8 @@ function toHeaders(req: http.IncomingMessage): Headers {
 
 function writeResponseHead(res: http.ServerResponse, upstream: Response): void {
   for (const [key, value] of upstream.headers.entries()) {
-    if (HOP_BY_HOP_HEADERS.has(key.toLowerCase())) {
+    const lowerKey = key.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lowerKey) || DECODED_RESPONSE_HEADERS.has(lowerKey)) {
       continue;
     }
     res.setHeader(key, value);

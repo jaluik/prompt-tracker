@@ -376,6 +376,12 @@ test("capture helpers read legacy dated capture directories", async () => {
 
   const resolved = await getPromptCaptureById(tempRoot, record.requestId);
   assert.equal(resolved?.sessionId, "legacy-session");
+
+  const sessionCaptures = await listPromptCapturesBySessionId(tempRoot, "legacy-session");
+  assert.deepEqual(
+    sessionCaptures.map((capture) => capture.requestId),
+    [record.requestId],
+  );
 });
 
 test("capture helpers group saved captures by Claude Code session", async () => {
@@ -463,6 +469,44 @@ test("capture helpers group saved captures by Claude Code session", async () => 
   assert.deepEqual(
     captures.map((capture) => capture.requestId),
     [first.requestId, second.requestId],
+  );
+});
+
+test("capture helpers read session details from the requested session directory", async () => {
+  const tempRoot = await createTempDir("prompt-gateway-session-detail-scope");
+  const record = capturePromptRequest(
+    {
+      method: "POST",
+      path: "/v1/messages",
+      sessionId: "target-session",
+      redactedHeaders: {},
+      body: {
+        model: "claude-sonnet",
+        messages: [{ role: "user", content: "target prompt" }],
+      },
+    },
+    {
+      status: 200,
+      durationMs: 5,
+      ok: true,
+      body: null,
+    },
+  );
+
+  await writeCaptureArtifacts(record, renderPromptCaptureHtml(record), {
+    outputRoot: tempRoot,
+    writeJson: true,
+    writeHtml: false,
+  });
+
+  await fs.mkdir(path.join(tempRoot, "captures", "sessions", "unrelated-session", "broken.json"), {
+    recursive: true,
+  });
+
+  const captures = await listPromptCapturesBySessionId(tempRoot, "target-session");
+  assert.deepEqual(
+    captures.map((capture) => capture.requestId),
+    [record.requestId],
   );
 });
 
